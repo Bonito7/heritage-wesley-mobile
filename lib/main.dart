@@ -119,6 +119,80 @@ class _WebViewScreenState extends State<WebViewScreen> {
     }
   }
 
+  // Gérer la déconnexion de l'utilisateur
+  Future<void> _handleLogout(BuildContext context) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text(
+            'Déconnexion',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Êtes-vous sûr de vouloir vous déconnecter de l\'application ?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Annuler'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.redAccent,
+              ),
+              child: const Text('Se déconnecter'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm == true) {
+      try {
+        // 1. Effacer les cookies de la WebView
+        final cookieManager = CookieManager.instance();
+        await cookieManager.deleteAllCookies();
+
+        // 2. Effacer le stockage local et le stockage de session via JS
+        await _webViewController?.evaluateJavascript(
+          source: "window.localStorage.clear(); window.sessionStorage.clear();",
+        );
+
+        // 3. Effacer le cache de la WebView
+        await InAppWebViewController.clearAllCache();
+
+        // 4. Recharger l'URL initiale
+        await _webViewController?.loadUrl(
+          urlRequest: URLRequest(url: WebUri(_initialUrl)),
+        );
+
+        // 5. Afficher une confirmation à l'utilisateur
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Déconnexion réussie'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Color(0xFFb45309),
+            ),
+          );
+        }
+      } catch (e) {
+        debugPrint("Erreur lors de la déconnexion : $e");
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Erreur lors de la déconnexion'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -158,6 +232,8 @@ class _WebViewScreenState extends State<WebViewScreen> {
                       builder: (_) => const PrivacyPolicyScreen(),
                     ),
                   );
+                } else if (value == 'logout') {
+                  _handleLogout(context);
                 }
               },
               itemBuilder: (context) => [
@@ -172,6 +248,20 @@ class _WebViewScreenState extends State<WebViewScreen> {
                       ),
                       SizedBox(width: 10),
                       Text('Règles de confidentialité'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'logout',
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.logout_rounded,
+                        color: Colors.redAccent,
+                        size: 20,
+                      ),
+                      SizedBox(width: 10),
+                      Text('Déconnexion'),
                     ],
                   ),
                 ),
