@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'privacy_policy_screen.dart';
 
 void main() {
@@ -139,9 +140,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.redAccent,
-              ),
+              style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
               child: const Text('Se déconnecter'),
             ),
           ],
@@ -283,6 +282,9 @@ class _WebViewScreenState extends State<WebViewScreen> {
                         true, // Crucial pour les fonctionnalités PWA / cache local
                     databaseEnabled: true,
                     useShouldOverrideUrlLoading: true,
+                    javaScriptCanOpenWindowsAutomatically: true,
+                    supportMultipleWindows: true,
+                    thirdPartyCookiesEnabled: true,
                     mediaPlaybackRequiresUserGesture: false,
                     mixedContentMode:
                         MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
@@ -294,6 +296,60 @@ class _WebViewScreenState extends State<WebViewScreen> {
                   ),
                   onWebViewCreated: (controller) {
                     _webViewController = controller;
+                  },
+                  shouldOverrideUrlLoading: (controller, navigationAction) async {
+                    final uri = navigationAction.request.url;
+                    if (uri == null) {
+                      return NavigationActionPolicy.ALLOW;
+                    }
+
+                    final String urlString = uri.toString();
+                    final String scheme = uri.scheme.toLowerCase();
+
+                    // Autoriser la navigation standard pour http et https
+                    if (scheme == 'http' || scheme == 'https') {
+                      return NavigationActionPolicy.ALLOW;
+                    }
+
+                    // Pour les schémas d'applications externes (intent, wave, orange, tel, whatsapp, etc.)
+                    try {
+                      final Uri launchUri = Uri.parse(urlString);
+                      if (await canLaunchUrl(launchUri)) {
+                        await launchUrl(
+                          launchUri,
+                          mode: LaunchMode.externalApplication,
+                        );
+                      } else if (urlString.startsWith('intent://')) {
+                        // Tenter d'extraire la fallback URL si présente dans l'intent Android
+                        final fallbackMatch = RegExp(
+                          r'S\.browser_fallback_url=([^;]+)',
+                        ).firstMatch(urlString);
+                        if (fallbackMatch != null) {
+                          final fallbackUrl = Uri.decodeComponent(
+                            fallbackMatch.group(1)!,
+                          );
+                          await controller.loadUrl(
+                            urlRequest: URLRequest(url: WebUri(fallbackUrl)),
+                          );
+                        }
+                      }
+                    } catch (e) {
+                      debugPrint(
+                        "Erreur lors du traitement de l'URL externe ($urlString) : $e",
+                      );
+                    }
+
+                    return NavigationActionPolicy.CANCEL;
+                  },
+                  onCreateWindow: (controller, createWindowAction) async {
+                    final url = createWindowAction.request.url;
+                    if (url != null) {
+                      // Rediriger la fenêtre popup vers la WebView principale
+                      await controller.loadUrl(
+                        urlRequest: URLRequest(url: url),
+                      );
+                    }
+                    return true;
                   },
                   onProgressChanged: (controller, progress) {
                     setState(() {
@@ -309,18 +365,24 @@ class _WebViewScreenState extends State<WebViewScreen> {
                     });
                   },
                   onReceivedError: (controller, request, error) {
-                    // Si l'erreur concerne la perte de connexion internet
-                    if (error.type ==
-                            WebResourceErrorType.CANNOT_CONNECT_TO_HOST ||
-                        error.type == WebResourceErrorType.HOST_LOOKUP ||
-                        error.type == WebResourceErrorType.TIMEOUT ||
-                        error.type ==
-                            WebResourceErrorType.NETWORK_CONNECTION_LOST ||
-                        error.type ==
-                            WebResourceErrorType.NOT_CONNECTED_TO_INTERNET) {
-                      setState(() {
-                        _isOffline = true;
-                      });
+                    final isMainFrame = request.isForMainFrame ?? true;
+                    final urlString = request.url.toString();
+                    // Déclencher l'état hors-ligne uniquement pour la trame principale sur des liens HTTP/HTTPS
+                    if (isMainFrame &&
+                        (urlString.startsWith('http://') ||
+                            urlString.startsWith('https://'))) {
+                      if (error.type ==
+                              WebResourceErrorType.CANNOT_CONNECT_TO_HOST ||
+                          error.type == WebResourceErrorType.HOST_LOOKUP ||
+                          error.type == WebResourceErrorType.TIMEOUT ||
+                          error.type ==
+                              WebResourceErrorType.NETWORK_CONNECTION_LOST ||
+                          error.type ==
+                              WebResourceErrorType.NOT_CONNECTED_TO_INTERNET) {
+                        setState(() {
+                          _isOffline = true;
+                        });
+                      }
                     }
                   },
                 ),
