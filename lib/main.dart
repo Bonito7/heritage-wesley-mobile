@@ -308,6 +308,22 @@ class _WebViewScreenState extends State<WebViewScreen> {
 
                     // Autoriser la navigation standard pour http et https
                     if (scheme == 'http' || scheme == 'https') {
+                      // Intercepter les liens YouTube pour les ouvrir dans l'app native
+                      final host = uri.host.toLowerCase();
+                      if (host.contains('youtube.com') || host.contains('youtu.be')) {
+                        try {
+                          final Uri launchUri = Uri.parse(urlString);
+                          if (await canLaunchUrl(launchUri)) {
+                            await launchUrl(
+                              launchUri,
+                              mode: LaunchMode.externalApplication,
+                            );
+                          }
+                        } catch (e) {
+                          debugPrint("Erreur ouverture YouTube: $e");
+                        }
+                        return NavigationActionPolicy.CANCEL;
+                      }
                       return NavigationActionPolicy.ALLOW;
                     }
 
