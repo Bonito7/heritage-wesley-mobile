@@ -296,6 +296,27 @@ class _WebViewScreenState extends State<WebViewScreen> {
                   ),
                   onWebViewCreated: (controller) {
                     _webViewController = controller;
+                    // Handler JS pour ouvrir les URLs externes (YouTube, etc.)
+                    controller.addJavaScriptHandler(
+                      handlerName: 'openExternal',
+                      callback: (args) async {
+                        if (args.isNotEmpty) {
+                          final urlStr = args[0] as String;
+                          try {
+                            final uri = Uri.parse(urlStr);
+                            if (await canLaunchUrl(uri)) {
+                              await launchUrl(
+                                uri,
+                                mode: LaunchMode.externalApplication,
+                              );
+                            }
+                          } catch (e) {
+                            debugPrint('Erreur openExternal: $e');
+                          }
+                        }
+                        return null;
+                      },
+                    );
                   },
                   shouldOverrideUrlLoading: (controller, navigationAction) async {
                     final uri = navigationAction.request.url;
@@ -358,9 +379,25 @@ class _WebViewScreenState extends State<WebViewScreen> {
                     return NavigationActionPolicy.CANCEL;
                   },
                   onCreateWindow: (controller, createWindowAction) async {
+                    // Fallback si le handler JS n'a pas capturé l'URL
                     final url = createWindowAction.request.url;
                     if (url != null) {
-                      // Rediriger la fenêtre popup vers la WebView principale
+                      final host = url.host.toLowerCase();
+                      if (host.contains('youtube.com') ||
+                          host.contains('youtu.be')) {
+                        try {
+                          final launchUri = Uri.parse(url.toString());
+                          if (await canLaunchUrl(launchUri)) {
+                            await launchUrl(
+                              launchUri,
+                              mode: LaunchMode.externalApplication,
+                            );
+                          }
+                        } catch (e) {
+                          debugPrint("Erreur ouverture YouTube (createWindow): $e");
+                        }
+                        return true;
+                      }
                       await controller.loadUrl(
                         urlRequest: URLRequest(url: url),
                       );
@@ -379,6 +416,19 @@ class _WebViewScreenState extends State<WebViewScreen> {
                     setState(() {
                       _isLoading = false;
                     });
+                    // Intercepter window.open côté JS pour envoyer l'URL à Flutter
+                    await controller.evaluateJavascript(source: """
+                      (function() {
+                        var _origOpen = window.open;
+                        window.open = function(url, target, features) {
+                          if (url && (url.indexOf('youtube.com') !== -1 || url.indexOf('youtu.be') !== -1)) {
+                            window.flutter_inappwebview.callHandler('openExternal', url);
+                            return null;
+                          }
+                          return _origOpen ? _origOpen.call(window, url, target, features) : null;
+                        };
+                      })();
+                    """);
                   },
                   onReceivedError: (controller, request, error) {
                     final isMainFrame = request.isForMainFrame ?? true;
